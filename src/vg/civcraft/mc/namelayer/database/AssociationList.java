@@ -1,31 +1,19 @@
-package com.valadian.nametracker.database;
+package vg.civcraft.mc.namelayer.database;
 
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.UUID;
 
-import org.bukkit.configuration.file.FileConfiguration;
+import vg.civcraft.mc.namelayer.NameLayerPlugin;
 
-import com.valadian.nametracker.NameTrackerPlugin;
 
 public class AssociationList {
 	private Database db;
-    private final String host;
-    private final String dbname;
-    private final String username;
-    private final int port;
-    private final String password;
 
-	public AssociationList(NameTrackerPlugin plugin, FileConfiguration config_){
-		host = config_.getString("sql.hostname");
-		port = config_.getInt("sql.port");
-		dbname = config_.getString("sql.dbname");
-		username = config_.getString("sql.username");
-		password = config_.getString("sql.password");
-		db = new Database(host, port, dbname, username, password, plugin.getLogger());
-		boolean connected = db.connect();
-		if (connected){
+	public AssociationList(Database db){
+		this.db = db;
+		if (db.isConnected()){
 			genTables();
 			initializeProcedures();
 			initializeStatements();
@@ -50,12 +38,16 @@ public class AssociationList {
 	private PreparedStatement addPlayer;
     private PreparedStatement getUUIDfromPlayer;
     private PreparedStatement getPlayerfromUUID;
+	private PreparedStatement changePlayerName;
 	
 	public void initializeStatements(){
 		addPlayer = db.prepareStatement("call addplayertotable(?, ?)"); // order player name, uuid 
 		getUUIDfromPlayer = db.prepareStatement("select uuid from Name_player " +
 				"where player=?");
 		getPlayerfromUUID = db.prepareStatement("select player from Name_player " +
+				"where uuid=?");
+
+		changePlayerName = db.prepareStatement("delete from Name_player " +
 				"where uuid=?");
 	}
 	
@@ -64,32 +56,48 @@ public class AssociationList {
 		db.execute("create definer=current_user procedure addplayertotable("
 				+ "in pl varchar(40), in uu varchar(40)) sql security invoker begin "
 				+ ""
-				+ "declare amount int(10);"
 				+ "declare account varchar(40);"
 				+ "declare nameamount int(10);"
 				+ ""
-				+ "set amount=0;"
-				+ "set amount=(select count(*) from Name_player p where p.uuid=uu);"
+				+ "set @@SESSION.max_sp_recursion_depth = 30;"
 				+ ""
-				+ "if (amount < 1) then"
+				+ "set nameamount=0;"
+				+ "set nameamount=(select count(*) from Name_player p where p.uuid=uu);"
+				+ ""
+				+ "if (nameamount < 1) then"
+				+ "		setName: loop"
 				+ "		set account =(select uuid from Name_player p where p.player=pl);"
 				+ "		if (account not like uu) then"
+				+ ""
+				+ "				if (nameamount > 0) then"
+				+ "					set pl = (select concat(SUBSTRING(pl, 1, length(pl)-1)));"
+				+ "				end if;"
+				+ ""
 				+ "			insert ignore into playercountnames (player, amount) values (pl, 0);"
 				+ ""
-				+ "			update playercountnames set amount = amount+1 where player=pl;"
+				+ "			update playercountnames set amount = nameamount+1 where player=pl;"
 				+ ""
 				+ "			set nameamount=(select amount from playercountnames where player=pl);"
 				+ ""
-				+ "			insert into Name_player (player, uuid) values ((select concat (pl,nameamount)), uu);"
+				+ "			set pl = (select concat (pl,nameamount));"
+				+ ""
+				+ "			set account =(select uuid from Name_player p where p.player=pl);"
+				+ ""
+				+ "			if (account not like uu) then"
+				+ "				iterate setName;"
+				+ "			end if;"
 				+ "		else"
 				+ "			insert ignore into Name_player (player, uuid) values (pl, uu);"
+				+ "			leave SetName;"
 				+ "		end if;"
+				+ "END LOOP setName;"
 				+ "end if;"
 				+ "end");
 	}
 	
 	// returns null if no uuid was found
 	public UUID getUUID(String playername){
+		NameLayerPlugin.reconnectAndReintializeStatements();
 		try {
 			getUUIDfromPlayer.setString(1, playername);
 			ResultSet set = getUUIDfromPlayer.executeQuery();
@@ -105,6 +113,7 @@ public class AssociationList {
 	
 	// returns null if no playername was found
 	public String getCurrentName(UUID uuid){
+		NameLayerPlugin.reconnectAndReintializeStatements();
 		try {
 			getPlayerfromUUID.setString(1, uuid.toString());
 			ResultSet set = getPlayerfromUUID.executeQuery();
@@ -119,10 +128,22 @@ public class AssociationList {
 	}
 	
 	public void addPlayer(String playername, UUID uuid){
+		NameLayerPlugin.reconnectAndReintializeStatements();
 		try {
 			addPlayer.setString(1, playername);
 			addPlayer.setString(2, uuid.toString());
 			addPlayer.execute();
+		} catch (SQLException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+	public void changePlayer(String newName, UUID uuid) {
+		NameLayerPlugin.reconnectAndReintializeStatements();
+		try {
+			changePlayerName.setString(1, uuid.toString());
+			changePlayerName.execute();
+			addPlayer(newName, uuid);
 		} catch (SQLException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();

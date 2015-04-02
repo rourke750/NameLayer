@@ -1,58 +1,42 @@
-package com.valadian.nametracker;
+package vg.civcraft.mc.namelayer.misc.v1_8_R1;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-import java.util.UUID;
+import java.util.logging.Level;
 
-import net.minecraft.server.v1_7_R4.EntityHuman;
-import net.minecraft.util.com.mojang.authlib.GameProfile;
+import net.minecraft.server.v1_8_R1.MinecraftServer;
+import net.minecraft.server.v1_8_R1.EntityHuman;
 
-import org.bukkit.configuration.file.FileConfiguration;
-import org.bukkit.craftbukkit.v1_7_R4.entity.CraftHumanEntity;
+import org.bukkit.craftbukkit.v1_8_R1.entity.CraftHumanEntity;
 import org.bukkit.entity.Player;
-import org.bukkit.event.EventHandler;
-import org.bukkit.event.EventPriority;
-import org.bukkit.event.Listener;
-import org.bukkit.event.player.AsyncPlayerPreLoginEvent;
-import org.bukkit.event.player.PlayerLoginEvent;
-import org.bukkit.plugin.java.JavaPlugin;
 
-import com.valadian.nametracker.database.AssociationList;
+import vg.civcraft.mc.namelayer.NameAPI;
+import vg.civcraft.mc.namelayer.NameLayerPlugin;
+import vg.civcraft.mc.namelayer.database.AssociationList;
+import vg.civcraft.mc.namelayer.misc.ProfileInterface;
 
-public class NameTrackerPlugin extends JavaPlugin implements Listener {
-	public static AssociationList associations;
+import com.mojang.authlib.GameProfile;
 
-	@Override
-	public void onEnable() {
-		FileConfiguration config = getConfig();
-		new ConfigManager().setConfigOptions(config);;
-		saveConfig();
-		associations = new AssociationList(this, config);
-	    getServer().getPluginManager().registerEvents(this, this);
-	} 
-	
-	public void onDisable() {
-	}
-	
-	
-	@EventHandler(priority=EventPriority.LOWEST)
-	public void OnPlayerLogin(AsyncPlayerPreLoginEvent event)
-	{
-		String playername = event.getName();
-		UUID uuid = event.getUniqueId();
-		associations.addPlayer(playername, uuid);
-	}
-	
-	// sets the player name in the gameprofile
-	@EventHandler(priority=EventPriority.LOWEST)
-	public void loginEvent(PlayerLoginEvent event){
-		Player player = event.getPlayer();
+public class ProfileModifier implements ProfileInterface{ // meh package change, when i get rid of 1.7 compatibility come here
+
+	private AssociationList associations = NameAPI.getAssociationList();
+
+	public void setPlayerProfle(Player player) {
 		String name = associations.getCurrentName(player.getUniqueId());
+		String oldName = player.getName();
+		if (name.length() > 16) {
+			NameLayerPlugin
+					.log(Level.INFO,
+							String.format(
+									"The player %s (%s) was kicked from the server due to his "
+											+ "name already existing but now becoming over 16 characters.",
+									name, player.getUniqueId().toString()));
+		}
 		try {
 			// start of getting the GameProfile
 			CraftHumanEntity craftHuman = (CraftHumanEntity) player;
 			EntityHuman human = craftHuman.getHandle();
-			Field fieldName = EntityHuman.class.getDeclaredField("i");
+			Field fieldName = EntityHuman.class.getDeclaredField("bF");
 			fieldName.setAccessible(true);
 			GameProfile prof = (GameProfile) fieldName.get(human);
 			// End
@@ -61,6 +45,8 @@ public class NameTrackerPlugin extends JavaPlugin implements Listener {
 			Field nameUpdate = prof.getClass().getDeclaredField("name");
 
 			setFinalStatic(nameUpdate, name, prof);
+			
+			MinecraftServer.getServer().getUserCache().a(prof);
 			// end
 		} catch (NoSuchFieldException e) {
 			// TODO Auto-generated catch block
@@ -78,9 +64,11 @@ public class NameTrackerPlugin extends JavaPlugin implements Listener {
 		player.setDisplayName(name);
 		player.setPlayerListName(name);
 		player.setCustomName(name);
+		NameLayerPlugin.log(Level.INFO, String.format("The player %s has had his name changed to %s.", oldName, name));
 	}
-	
-	static void setFinalStatic(Field field, Object newValue, GameProfile prof) {
+
+	public void setFinalStatic(Field field, Object newValue, Object profile) {
+		GameProfile prof = (GameProfile) profile;
 		try {
 			field.setAccessible(true);
 
